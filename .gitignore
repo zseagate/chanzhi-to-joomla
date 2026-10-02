@@ -1,0 +1,17 @@
+# Real backups, dumps, secrets and generated output never enter git.
+*.sql
+*.sql.gz
+*.sql.zip
+*.tar.gz
+*.tgz
+*.zip
+*.png
+*.jpg
+*.jpeg
+*pass*
+*secret*
+out/
+shots/
+tmp/
+__pycache__/
+*.pyc
