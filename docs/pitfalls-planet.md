@@ -71,3 +71,11 @@ WHERE type='article' GROUP BY id HAVING c > 1;
 ---
 
  **一句话总结**：迁移最大的风险从来不是目标系统的新功能，而是那些“我以为是这样”的想当然——1 对 1 还是 1 对多、NULL 长什么样、排序到底按什么排。先把这些问清楚，剩下的就是体力活，而体力活现在可以交给 AI。
+
+---
+
+## 8. 开源了，拿去即用
+
+上面提到的脚本已整理成开源项目（MIT）：**https://github.com/zseagate/chanzhi-to-joomla**
+
+里面有：`dump_table`（备份解析）、主 ETL（含试迁/全量/301/Sitemap/工作流关联）、`multichannel_dup`（多栏目补副本）、`refresh_pages`/`rebuild_bodies`（增量）、`shot/gaps/probe/cmp`（截图校验栈），外加这篇复盘的完整版 playbook。配置收敛在一个 `config.py`，适配自己站点主要改栏目映射和菜单。星球里的朋友拿去改改就能用，欢迎 Star 和 PR。
