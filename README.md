@@ -72,6 +72,51 @@ python3 tools/rebuild_bodies.py --pair <新id>:<源id>:<源页面html> [--check]
 
 教训：栏目落地页只显示最新 N 条，翻页可能是假的——**比对以 SQL 为准，线上只抽查**；源站可能限流，抓取单请求加间隔。
 
+## 5.5 割接后持续同步（sync_source.php 双通道）
+
+割接后老站还在更新、新站已上线，需要一条可持续的同步通道。`tools/sync_source.php`
+是**部署在 Joomla 站点 `cli/` 目录的单文件 PHP 脚本**（PHP 7.2.5+，照官方
+`cli/joomla.php` 的 bootstrap 拿数据库句柄），默认 dry-run、`--apply` 实写、
+每篇文章一个事务、写后自动校验（alias 唯一 / assets lft-rgt 成对 / 工作流关联存在）。
+
+**通道 A：HTTP 抓取（老站可访问时）**
+
+```bash
+php cli/sync_source.php            # 预览
+php cli/sync_source.php --apply    # 实写
+```
+
+- 发现 = 老站 `sitemap.xml` **单请求拿全量文章清单**（绕开落地页只显示最新几条、
+  翻页是假的两个坑）∪ 各栏目落地页；与本地已有老 id 集（`alias=c<栏目id>-<老id>` 反解，
+  无状态文件天然幂等）做差集。
+- 主栏目 = 落地页 item 链接指向的栏目 slug（CMS 的规范链接，与 sitemap 列的栏目可能不同）；
+  交叉发布自动补副本行；一文多栏目时**两条老 URL 都写 301**（需启用 System - Redirect 插件）；
+  站外文（文章页直接 301 到外域）标题直跳外链。
+- ⚠️ **频控血泪**：老站对高频抓取封 IP（TCP 级，实测一天约十轮全量被封）。每天最多一轮；
+  只想看看有没有新文章用 `--no-landing`（一个请求）；被封后等解封，别硬抓。
+- ⚠️ **境外服务器连不上境内老站**（TCP 直接被断）时：国内机器
+  `ssh -R 1080 user@server` 建反向 SOCKS 隧道，脚本加 `--proxy=socks5h://127.0.0.1:1080`。
+
+**通道 B：备份导入（老站封禁/不可达时的正道，零访问）**
+
+```bash
+# 本地(能读备份的机器):
+python3 tools/sync_bundle_from_backup.py --check   # 先看计划
+python3 tools/sync_bundle_from_backup.py           # 生成 out/sync_bundle/
+tar -czf bundle.tgz -C out/sync_bundle .
+# 目标站点:
+tar -xzf bundle.tgz -C tmp/sync_bundle
+php cli/sync_source.php --bundle=tmp/sync_bundle            # 预览
+php cli/sync_source.php --bundle=tmp/sync_bundle --apply    # 实写
+```
+
+- 备份比抓取**信息更全**：置顶（`sticky`→featured）、keywords、摘要、附件表都能带上。
+- 主栏目口径：已在目标库的文章沿用目标库主/副本栏目（多目标站收敛一致——同一份 bundle
+  在每个站各导一次即可）；全新文章取 `eps_relation` 首个存活栏目（纯备份推不出 CMS
+  规范链接，首行规则实测约 7/10 吻合）。
+- bundle 缺文件时正文自动回退老站绝对 URL（访客浏览器可加载，老站通常只封服务器 IP）。
+- 死栏目在 `config.py` 的 `DEADMAP` 里并入存活栏目。
+
 ## 6. 模板 1:1 与栏目数核对
 
 ```bash
@@ -112,7 +157,9 @@ tools/  dump_table.py 备份解析
         make_menus_modules.py 菜导/模块
         add_sitemap.py 站点地图
         multichannel_dup.py 多栏目副本
-        refresh_pages.py / rebuild_bodies.py 增量
+        refresh_pages.py / rebuild_bodies.py 割接前增量
+        sync_source.php 割接后持续同步(部署在站点 cli/, HTTP 抓取 + bundle 备份导入双通道)
+        sync_bundle_from_backup.py 备份→离线增量包(配合 sync_source.php --bundle)
         shot.py / gaps.py / probe.py / cmp.py 截图校验栈
         config.py 唯一需要改的配置
 docs/   playbook.md 完整复盘备忘

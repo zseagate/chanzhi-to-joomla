@@ -37,6 +37,9 @@ JCAT_BASE = 1001
 PAGE_CAT = 1014
 # Human names, only used for progress printouts:
 CAT_NAMES = {'21': 'News', '17': 'Notices', '24': 'Briefs', '77': 'Training'}
+# Dead/removed old category ids -> merge into a surviving old category id
+# (used by sync_bundle_from_backup.py when a relation points at a dead cat):
+DEADMAP = {}  # e.g. {'65': '21', '38': '24'}
 
 # --- Menus / homepage modules (EXAMPLE values — replace with yours) ---
 # (menu title, menu alias, joomla catid)
@@ -66,7 +69,8 @@ PAGE_LOCAL_BASE = 2000
 SITEMAP_BODY = ('<p><strong>Channels</strong></p><ul><li><a href="/news">News</a></li>'
                 '<li><a href="/notices">Notices</a></li></ul>')
 
-# Old site host (stripped to site-relative links; '' to skip):
+# Old site host (stripped to site-relative links; also used by
+# sync_bundle_from_backup.py as the fallback URL prefix for missing files):
 SOURCE_HOST = os.environ.get('SOURCE_HOST', '')
 
 # --- Screenshot stack ---
