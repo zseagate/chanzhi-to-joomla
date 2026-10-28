@@ -50,7 +50,8 @@ $opt = getopt('', ['apply', 'src-base:', 'relay-token:', 'proxy:', 'module:', 'n
 $APPLY = isset($opt['apply']);
 $NO_DL = isset($opt['no-download']);
 $SRC_BASE = isset($opt['src-base']) ? rtrim((string)$opt['src-base'], '/') : SRC_BASE_DEFAULT;
-$RELAY_TOKEN = isset($opt['relay-token']) ? (string)$opt['relay-token'] : (string)getenv('RELAY_TOKEN');
+$RELAY_TOKEN = isset($opt['relay-token']) ? (string)$opt['relay-token']
+             : ((string)getenv('RELAY_TOKEN') ?: (string)getenv('SXPG_RELAY_TOKEN'));
 $PROXY = isset($opt['proxy']) ? (string)$opt['proxy'] : '';
 $TIMEOUT = isset($opt['timeout']) ? max(10, (int)$opt['timeout']) : 60;
 $MODULE_ID = isset($opt['module']) ? (int)$opt['module'] : 0;

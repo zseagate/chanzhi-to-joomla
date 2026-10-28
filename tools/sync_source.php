@@ -91,7 +91,7 @@ $BUNDLE   = isset($opt['bundle']) ? rtrim((string)$opt['bundle'], '/') : '';
 $SRC_BASE = isset($opt['src-base']) ? rtrim((string)$opt['src-base'], '/') : SRC_BASE_DEFAULT;
 // 中继口令(也可用环境变量 RELAY_TOKEN)
 $RELAY_TOKEN = isset($opt['relay-token']) ? (string)$opt['relay-token']
-             : (string)getenv('RELAY_TOKEN');
+             : ((string)getenv('RELAY_TOKEN') ?: (string)getenv('SXPG_RELAY_TOKEN'));
 
 // 锁文件: tmp/ 目录可能不存在, 自动创建; 再不行退回系统临时目录
 $lockDir = JPATH_BASE . '/tmp';
