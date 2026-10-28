@@ -42,8 +42,10 @@ if (PHP_SAPI !== 'cli') {
 /* ===================== 站点配置(按你的站改这里) ===================== */
 
 // 老站(蝉知)地址
-const SRC_BASE = 'https://old-site.example.com';
+const SRC_BASE_DEFAULT = 'https://old-site.example.com';
 const SRC_HOST = 'old-site.example.com';
+// 实际取源地址(--src-base 可覆盖, 例如指向自建只读中继 relay_source.php)
+$SRC_BASE = SRC_BASE_DEFAULT;
 
 // 栏目 slug(老站 URL 路径名) => [Joomla catid, 名称(仅打印用)]
 // 对照迁移时的 ALIVE_ORDER/JCAT_BASE 逐个填
@@ -73,7 +75,7 @@ const FILE_RE   = '#/file\.php\?f=([^"\'>\s<>]+)((?:&[^"\'>\s<>]*)?)#';
 
 /* ----------------------------- 参数/锁/日志 ----------------------------- */
 
-$opt = getopt('', ['apply', 'limit:', 'only:', 'no-landing', 'timeout:', 'proxy:', 'bundle:']);
+$opt = getopt('', ['apply', 'limit:', 'only:', 'no-landing', 'timeout:', 'proxy:', 'bundle:', 'src-base:', 'relay-token:']);
 $APPLY    = isset($opt['apply']);
 $NO_LAND  = isset($opt['no-landing']);
 $ONLY     = isset($opt['only']) ? array_map('intval', explode(',', (string)$opt['only'])) : [];
@@ -84,6 +86,12 @@ $HTTP_TIMEOUT = isset($opt['timeout']) ? max(10, (int)$opt['timeout']) : 40;
 $PROXY    = isset($opt['proxy']) ? (string)$opt['proxy'] : '';
 // 备份通道: 导入 sync_bundle_from_backup.py 生成的增量包目录(bundle.json + files/)
 $BUNDLE   = isset($opt['bundle']) ? rtrim((string)$opt['bundle'], '/') : '';
+// 取源中转: 指向只读中继(如 https://relay.example.com/relay.php), 源站/图片/附件全部走中继
+// 适用于「服务器连不上老站, 但有一台能连的机器」——见 docs/offsite-sync-relay.md
+$SRC_BASE = isset($opt['src-base']) ? rtrim((string)$opt['src-base'], '/') : SRC_BASE_DEFAULT;
+// 中继口令(也可用环境变量 RELAY_TOKEN)
+$RELAY_TOKEN = isset($opt['relay-token']) ? (string)$opt['relay-token']
+             : (string)getenv('RELAY_TOKEN');
 
 // 锁文件: tmp/ 目录可能不存在, 自动创建; 再不行退回系统临时目录
 $lockDir = JPATH_BASE . '/tmp';
@@ -119,6 +127,21 @@ function out(string $msg, bool $toLog = true): void
 
 /* ----------------------------- HTTP ----------------------------- */
 
+/** 取源 URL: 直连 = SRC_BASE + path; 中继(--src-base=...relay.php) = relay.php?p=<path>&t=<token> */
+function srcUrl(string $path): string
+{
+    global $SRC_BASE, $RELAY_TOKEN;
+    if (preg_match('#\.php$#', $SRC_BASE)) {
+        $sep = strpos($SRC_BASE, '?') === false ? '?' : '&';
+        $u = $SRC_BASE . $sep . 'p=' . rawurlencode($path);
+        if ($RELAY_TOKEN !== '') {
+            $u .= '&t=' . rawurlencode($RELAY_TOKEN);
+        }
+        return $u;
+    }
+    return $SRC_BASE . $path;
+}
+
 function httpGet(string $url, bool $follow = true, int $timeout = 0): array
 {
     global $HTTP_TIMEOUT;
@@ -140,6 +163,10 @@ function httpGet(string $url, bool $follow = true, int $timeout = 0): array
             CURLOPT_CONNECTTIMEOUT => 10,              // 连接阶段快速失败, 让重试有意义
             CURLOPT_USERAGENT      => UA,
         ];
+        global $RELAY_TOKEN;
+        if ($RELAY_TOKEN !== '') {
+            $copts[CURLOPT_HTTPHEADER] = ['X-Relay-Token: ' . $RELAY_TOKEN];
+        }
         if (defined('CURLOPT_IPRESOLVE')) {
             $copts[CURLOPT_IPRESOLVE] = CURL_IPRESOLVE_V4;
         }
@@ -266,7 +293,7 @@ function rewriteBody(string $html, array &$dl): string
               ? $fp
               : $fp . '.' . (in_array($t, TPL_EXT, true) ? $t : 'jpg');
         $staged = 'upload/' . $path;
-        $dl[$staged] = SRC_BASE . '/file.php?f=' . $fp . $tail;
+        $dl[$staged] = srcUrl('/file.php?f=' . $fp . $tail);
         return IMG_URL . '/' . $staged;
     }, $html);
 }
@@ -338,7 +365,7 @@ try {
     } else {
         /* ===== HTTP 通道 ===== */
     /* 2. 老站 sitemap 全量(单请求拿到全部文章 URL, 绕开落地页只显示最新几条的限制) */
-    [$code, $xml] = httpGet(SRC_BASE . '/sitemap.xml', true, 90);
+    [$code, $xml] = httpGet(srcUrl('/sitemap.xml'), true, 90);
     if ($code !== 200) {
         throw new RuntimeException("sitemap.xml 获取失败 http=$code (老站封禁? 走 --bundle 通道)");
     }
@@ -354,7 +381,7 @@ try {
     $land = [];    // 老id => [slug => item]
     if (!$NO_LAND) {
         foreach (CHANNELS as $slug => [$catid, $cn]) {
-            [$c2, $lh] = httpGet(SRC_BASE . '/' . $slug . '.html');
+            [$c2, $lh] = httpGet(srcUrl('/' . $slug . '.html'));
             if ($c2 !== 200) {
                 out("  [warn] 落地页 $slug http=$c2, 跳过(该栏目交叉信息缺失)");
                 continue;
@@ -425,7 +452,7 @@ try {
             $d = $land[$oid] ? reset($land[$oid])['date'] : ($sm[$oid][1] ?? '');
             $p['date'] = ($d !== '' ? $d : date('Y-m-d')) . ' 00:00:00';
         } else {
-            [$ac, $ah, $loc] = httpGet(SRC_BASE . "/$primary/$oid.html", false);
+            [$ac, $ah, $loc] = httpGet(srcUrl("/$primary/$oid.html"), false);
             if ($ac === 301 || $ac === 302) {
                 if (isExternalUrl($loc)) {
                     $p['ext'] = true;
@@ -453,7 +480,7 @@ try {
                 $attHtml = '';
                 foreach ($art['files'] as $f) {
                     $staged = 'upload/' . date('Ym') . '/' . $f['hex'] . '.' . $f['ext'];
-                    $p['dl'][$staged] = SRC_BASE . $f['href'];
+                    $p['dl'][$staged] = srcUrl($f['href']);
                     $attHtml .= '<li><a href="' . IMG_URL . '/' . $staged . '" download="' . htmlspecialchars($f['title'], ENT_QUOTES) . '">' . htmlspecialchars($f['title'], ENT_QUOTES) . '</a></li>';
                 }
                 if ($attHtml !== '') {

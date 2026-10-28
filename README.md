@@ -72,7 +72,7 @@ python3 tools/rebuild_bodies.py --pair <新id>:<源id>:<源页面html> [--check]
 
 教训：栏目落地页只显示最新 N 条，翻页可能是假的——**比对以 SQL 为准，线上只抽查**；源站可能限流，抓取单请求加间隔。
 
-## 5.5 割接后持续同步（sync_source.php 双通道）
+## 5.5 割接后持续同步（sync_source.php 三通道：抓取 / 备份 / 中继）
 
 割接后老站还在更新、新站已上线，需要一条可持续的同步通道。`tools/sync_source.php`
 是**部署在 Joomla 站点 `cli/` 目录的单文件 PHP 脚本**（PHP 7.2.5+，照官方
@@ -117,6 +117,42 @@ php cli/sync_source.php --bundle=tmp/sync_bundle --apply    # 实写
 - bundle 缺文件时正文自动回退老站绝对 URL（访客浏览器可加载，老站通常只封服务器 IP）。
 - 死栏目在 `config.py` 的 `DEADMAP` 里并入存活栏目。
 
+**通道 C：只读中继（服务器连不上老站、但有一台机器能连）**
+
+拿一台能出网访问老站的机器（国内常见）做**只读中继**，目标站经 HTTP 或 SSH 反向隧道取源：
+
+```bash
+# 中继机: 站点根目录放 tools/relay_source.php → /relay.php，并写口令文件
+sudo install -d -m 755 /etc/relay-source
+head -c 32 /dev/urandom | base64 | tr -d '/+=' | cut -c1-40 | sudo tee /etc/relay-source/token
+
+# 目标站: 指向中继（口令也可用环境变量 RELAY_TOKEN）
+php cli/sync_source.php --src-base=https://relay.example.com/relay.php --relay-token=<token>
+```
+
+- 中继只放行 `sitemap.xml`、栏目页、文章页、`file.php`、`file-download-*`，主机固定，
+  拒绝任意 URL（防 SSRF）；口令走 `?t=` 或 `X-Relay-Token`；上游最小间隔 1s、静态资源缓存 7 天。
+- 站外文判定依赖 `301 + Location`：中继只跟随**站内**跳转，站外 301 原样回传。
+- 目标站连不到中继机时用反向隧道（`tools/relay_tunnel_setup.sh` 建 systemd 常驻服务，
+  本机 `127.0.0.1:80` → 目标机 `127.0.0.1:18080`），目标站改跑
+  `./cli/sync_via_relay.sh [--apply]`（包装 `--src-base=http://127.0.0.1:18080/relay.php`）。
+- 细节与排障见 `docs/offsite-sync-relay.md`。
+
+**首页轮播也要同步（文章同步不覆盖它）**
+
+老站首页幻灯是「区块」不是文章，`sitemap`/文章页里都没有，迁移后不会自动更新。
+`tools/sync_slides.php` 部署到同一 `cli/` 目录，抓首页轮播块 → 下载图片 →
+重建 `mod_custom` 模块内容（`.sxpg-slides > .carousel-inner > .item` + 左右箭头 + 圆点）：
+
+```bash
+php cli/sync_slides.php --apply                       # 默认自动找内容含 sxpg-slides 的模块
+php cli/sync_slides.php --apply --src-base=http://127.0.0.1:18080/relay.php   # 走中继
+php cli/sync_slides.php --apply --module=1014 --dir=/images/site/slides       # 指定模块/图片目录
+```
+
+- 幻灯图片**不要**加 `loading="lazy"`：容器初始高度为 0 时浏览器判定不可见就永不加载，轮播会塌成空白。
+- 切换动画用「旧图原地不动、新图从左/右覆盖入场」，旧图同时退出会在中间露出空白。
+
 ## 6. 模板 1:1 与栏目数核对
 
 ```bash
@@ -158,11 +194,15 @@ tools/  dump_table.py 备份解析
         add_sitemap.py 站点地图
         multichannel_dup.py 多栏目副本
         refresh_pages.py / rebuild_bodies.py 割接前增量
-        sync_source.php 割接后持续同步(部署在站点 cli/, HTTP 抓取 + bundle 备份导入双通道)
+        sync_source.php 割接后持续同步(部署在站点 cli/, HTTP 抓取 + bundle 备份导入 + 中继三通道)
+        sync_slides.php 首页轮播区块同步(部署在站点 cli/)
+        relay_source.php 只读中继(给连不上老站的服务器取源)
+        relay_tunnel_setup.sh / sync_via_relay.sh 反向隧道 + 目标站包装脚本
         sync_bundle_from_backup.py 备份→离线增量包(配合 sync_source.php --bundle)
         shot.py / gaps.py / probe.py / cmp.py 截图校验栈
         config.py 唯一需要改的配置
 docs/   playbook.md 完整复盘备忘
+        offsite-sync-relay.md 老站封服务器时的只读中继方案
         pitfalls-wechat.md 公众号文章
         pitfalls-planet.md 知识星球分享
 ```
